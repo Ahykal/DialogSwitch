@@ -8,10 +8,11 @@ SetWorkingDir A_InitialWorkingDir
 
 ; --- 全局变量定义 ---
 global iniPath := A_InitialWorkingDir "\DialogSwitch.ini"
+global settingsIniPath := A_InitialWorkingDir "\settings.ini"
 global actWinC := 0
 global main := Menu()
 global root := Map()
-global dopusRT_Path := "F:\SoftWare\Explorer\Directory Opus\dopusrt.exe"
+global dopusRT_Path := ""
 global g_qt := ""
 global g_application := ""
 global editGui := Gui()
@@ -42,9 +43,18 @@ InitializeTrayMenu() {
     MyTrayMenu.Add()
     MyTrayMenu.Add("打开自启目录", OpenStartupFolder)
     MyTrayMenu.Add("开机自启", ToggleStartupShortcut)
-    MyTrayMenu.Add("启用路径收集器", TogglePathCollector)
+    MyTrayMenu.Add("设置 Dopus 路径", SetDopusPathHandler)
+    MyTrayMenu.Add("启用路径收集器", TogglePathCollectorHandler)
     if (isPathCollectorEnabled)
         MyTrayMenu.Check("启用路径收集器")
+    ; 启用/禁用 单独分组Explorer路径
+    MyTrayMenu.Add("Explorer路径独立分组", ToggleSingleGroupExploreHandler)
+    if (isSingleGroupExplore)
+        MyTrayMenu.Check("Explorer路径独立分组")
+    ; 启用/禁用 将未分组项放入'-'分组
+    MyTrayMenu.Add("将未分组项独立分组", ToggleGroupUngroupedItemsHandler)
+    if (groupUngroupedItems)
+        MyTrayMenu.Check("未分组项独立分组")
     MyTrayMenu.Add()
     MyTrayMenu.Add("WindowSpy", (*) => Run(A_AhkPath "\..\..\WindowSpy.ahk"))
     MyTrayMenu.Add("挂起/恢复热键", (*) => Suspend())
@@ -60,9 +70,34 @@ ShowEditConfigGui(*) {
     editGui.Show()
 }
 
-TogglePathCollector(ItemName, ItemPos, MyMenu) {
-    global isPathCollectorEnabled
+SetDopusPathHandler(*) {
+    global dopusRT_Path, settingsIniPath
+    response := InputBox("请输入 dopusrt.exe 的完整路径:", "设置 Directory Opus 路径", , dopusRT_Path)
+    if (response.Result = "OK" && response.Value != "") {
+        dopusRT_Path := response.Value
+        IniWrite(dopusRT_Path, settingsIniPath, "Settings", "DopusPath")
+        TrayTip("设置已更新", "Directory Opus 路径已保存。", 10)
+    }
+}
+
+TogglePathCollectorHandler(ItemName, ItemPos, MyMenu) {
+    global isPathCollectorEnabled, settingsIniPath
     isPathCollectorEnabled := !isPathCollectorEnabled
+    IniWrite(isPathCollectorEnabled, settingsIniPath, "Settings", "PathCollectorEnabled")
+    MyMenu.ToggleCheck(ItemName)
+}
+
+ToggleSingleGroupExploreHandler(ItemName, ItemPos, MyMenu) {
+    global isSingleGroupExplore, settingsIniPath
+    isSingleGroupExplore := !isSingleGroupExplore
+    IniWrite(isSingleGroupExplore, settingsIniPath, "Settings", "SingleGroupExplore")
+    MyMenu.ToggleCheck(ItemName)
+}
+
+ToggleGroupUngroupedItemsHandler(ItemName, ItemPos, MyMenu) {
+    global groupUngroupedItems, settingsIniPath
+    groupUngroupedItems := !isSingleGroupExplore
+    IniWrite(groupUngroupedItems, settingsIniPath, "Settings", "GroupUngroupedItems")
     MyMenu.ToggleCheck(ItemName)
 }
 
@@ -103,6 +138,43 @@ UpdateTrayMenuState() {
     else
         MyTrayMenu.Uncheck("开机自启")
 }
+
+/**
+ * 从 settings.ini 文件加载设置。
+ * 如果文件或键不存在，则使用默认值并创建它们。
+ */
+LoadSettingsFromIni() {
+    global dopusRT_Path, isPathCollectorEnabled, isSingleGroupExplore, groupUngroupedItems, settingsIniPath
+
+    ; 读取 Dopus 路径，如果不存在则使用默认值
+    dopusRT_Path := IniRead(settingsIniPath, "Settings", "DopusPath", "F:\SoftWare\Explorer\Directory Opus\dopusrt.exe"
+    )
+    if (!FileExist(dopusRT_Path) && dopusRT_Path != "") {
+        TrayTip("配置警告", "Directory Opus路径无效: `n" . dopusRT_Path, 10)
+    }
+
+    ; 读取布尔值开关，如果不存在则使用默认值 (true/false)
+    isPathCollectorEnabled := IniRead(settingsIniPath, "Settings", "PathCollectorEnabled", "1") = "1"
+    isSingleGroupExplore := IniRead(settingsIniPath, "Settings", "SingleGroupExplore", "1") = "1"
+    groupUngroupedItems := IniRead(settingsIniPath, "Settings", "GroupUngroupedItems", "0") = "1"
+
+    ; 如果INI文件是首次创建，则将默认值写回，确保文件内容完整
+    if (!FileExist(settingsIniPath)) {
+        SaveAllSettingsToIni()
+    }
+}
+
+/**
+ * 将所有当前设置保存到 settings.ini 文件。
+ */
+SaveAllSettingsToIni() {
+    global dopusRT_Path, isPathCollectorEnabled, isSingleGroupExplore, groupUngroupedItems, settingsIniPath
+    IniWrite(dopusRT_Path, settingsIniPath, "Settings", "DopusPath")
+    IniWrite(isPathCollectorEnabled, settingsIniPath, "Settings", "PathCollectorEnabled")
+    IniWrite(isSingleGroupExplore, settingsIniPath, "Settings", "SingleGroupExplore")
+    IniWrite(groupUngroupedItems, settingsIniPath, "Settings", "GroupUngroupedItems")
+}
+
 ; =============================================================
 
 ; ================== 3. 配置编辑GUI与文件创建 ==================
@@ -212,6 +284,7 @@ InitializeEditConfigGui() {
     ParseConfigToBuildMapping(editGui["Config"].Value)
     editGui.AddEdit("r35 vText w300 WantTab")
     editGui.AddButton(, "确认").OnEvent("Click", SaveConfigAndReload)
+    LoadSettingsFromIni()
 }
 
 SaveConfigAndReload(*) {
@@ -360,7 +433,6 @@ FindAndBuildMenuForText(map, ptext, p*) {
     }
 }
 
-
 FindAndBuildMenuForExtend(map, p*) {
     ; 基本情况 1: 如果没有更多的扩展参数 (p* 为空),
     if (p.Length = 0) {
@@ -448,11 +520,39 @@ BuildExplorerPathsMenu() {
     }
 }
 
+; AddExplorerPathsFromQT(parent) {
+;     global g_qt
+;     if (g_qt == "") { ; 未尝试
+;         try {
+;             g_qt := ComObject("QTTabBarLib.Scripting") ;
+;         } catch {
+;             g_qt := 0 ; 失败则标记为 "已尝试但失败" (Failed)
+;             global g_application
+;             g_application := ComObject("Shell.Application")
+;         }
+;     }
+;     if IsObject(g_qt) {
+;         parent.Add("——————QTTabBar——————", HandleMenuItemClick)
+;         parent.Disable("——————QTTabBar——————")
+
+;         for wnd in g_qt.Windows {
+;             for tab in wnd.Tabs {
+;                 try folder := SubStr(tab.Path, 1, 2) = "::" ? "Shell:" . tab.Path : tab.path
+;                 if (!folder)
+;                     continue
+;                 parent.Add(folder, HandleMenuItemClick)
+;             }
+;         }
+;         return true
+;     }
+;     return false
+; }
+
 AddExplorerPathsFromQT(parent) {
     global g_qt
     if (g_qt == "") { ; 未尝试
         try {
-            g_qt := ComObject("QTTabBarLib.Scripting") ; 
+            g_qt := ComObject("QTTabBarLib.Scripting")
         } catch {
             g_qt := 0 ; 失败则标记为 "已尝试但失败" (Failed)
             global g_application
@@ -462,12 +562,23 @@ AddExplorerPathsFromQT(parent) {
     if IsObject(g_qt) {
         parent.Add("——————QTTabBar——————", HandleMenuItemClick)
         parent.Disable("——————QTTabBar——————")
+
         for wnd in g_qt.Windows {
-            for tab in wnd.Tabs {
-                try folder := SubStr(tab.Path, 1, 2) = "::" ? "Shell:" . tab.Path : tab.path
-                if (!folder)
-                    continue
-                parent.Add(folder, HandleMenuItemClick)
+            loop 3 {
+                try {
+                    for tab in wnd.Tabs {
+                        try folder := SubStr(tab.Path, 1, 2) = "::" ? "Shell:" . tab.Path : tab.path
+                        if (!folder)
+                            continue
+                        parent.Add(folder, HandleMenuItemClick)
+                    }
+
+                    ; 立即跳出重试循环，去处理下一个wnd
+                    break
+
+                } catch {
+                    Sleep 50 ; 等待50毫秒
+                }
             }
         }
         return true
@@ -661,7 +772,7 @@ GetDialogInfoWithUIA() {
         }
 
         dlgElement := UIA.ElementFromHandle(dlg)
-        
+
         local currentDir := ""
         if (rebarPane := dlgElement.FindFirst({ ClassName: "ReBarWindow32" }))
             if (addressBandRoot := rebarPane.FindFirst({ ClassName: "Address Band Root" }))
@@ -670,8 +781,8 @@ GetDialogInfoWithUIA() {
                         rawName := toolbar.Name
                         processedPath := RegExReplace(rawName, "i)^\w+:\s+", "")
                         if (processedPath == rawName) {
-                            parts := StrSplit(rawName, ":",, 2)
-                            if (parts.Length > 1) 
+                            parts := StrSplit(rawName, ":", , 2)
+                            if (parts.Length > 1)
                                 processedPath := Trim(parts[2])
                         }
                         currentDir := processedPath
@@ -885,14 +996,11 @@ Re:
     return
 }
 
-
 #HotIf WinActive("ahk_class #32770")
 LWin:: {
     ShowContextMenu()
 }
 
-MButton::{
+MButton:: {
     ShowContextMenu()
 }
-
-
