@@ -590,11 +590,15 @@ AddExplorerPathsFromDefault(parent) {
     parent.Add "——————Explorer——————", HandleMenuItemClick
     parent.Disable "——————Explorer——————"
     for exp in g_application.Windows {
-        path := exp.Document.Folder.Self.Path
-        try folder := SubStr(path, 1, 2) = "::" ? "Shell:" . path : path
-        if (!folder)
+        try {
+            path := exp.Document.Folder.Self.Path
+            try folder := SubStr(path, 1, 2) = "::" ? "Shell:" . path : path
+            if (!folder)
+                continue
+            parent.Add(folder, HandleMenuItemClick)
+        }catch{
             continue
-        parent.Add(folder, HandleMenuItemClick)
+        }
     }
 }
 
